@@ -1,0 +1,90 @@
+# ============================================================================
+# CI/CD for n8n-nodes-astrolabe
+#
+# 1. CI (PR + push main) : install -> lint (verified rules) -> build.
+# 2. Publish (push main) : publishes to npm WITH provenance, only when the
+#    package.json version is not already published (idempotent). Bump the
+#    version and merge to release.
+#
+# Provenance requires a PUBLIC repository (npm limitation) and the
+# `id-token: write` permission. n8n verification (since 2026-05-01) requires
+# packages to be published via GitHub Actions with a provenance statement.
+#
+# Repo secret required (Settings -> Secrets -> Actions):
+#   NPM_TOKEN — npm "Automation" (or Granular write) token for the package.
+# ============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    name: Lint & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # --ignore-scripts: skip the native build of isolated-vm (a transitive
+      # dep of n8n-workflow, unused for lint/build — only its types are needed);
+      # it fails to compile on the CI runner.
+      - name: Install
+        run: npm install --ignore-scripts
+
+      - name: Lint (verified community node rules)
+        run: npm run lint
+
+      - name: Build (tsc + icons)
+        run: npm run build
+
+  publish:
+    name: Publish to npm (with provenance)
+    needs: ci
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required to generate the provenance attestation
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install
+        run: npm install --ignore-scripts
+
+      - name: Is this version already published?
+        id: check
+        run: |
+          LOCAL=$(node -p "require('./package.json').version")
+          REMOTE=$(npm view n8n-nodes-astrolabe version 2>/dev/null || echo "none")
+          echo "local=$LOCAL published=$REMOTE"
+          if [ "$LOCAL" = "$REMOTE" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Version $LOCAL already published — nothing to do. Bump the version to release."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish (prepublishOnly re-runs build + lint)
+        if: steps.check.outputs.publish == 'true'
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

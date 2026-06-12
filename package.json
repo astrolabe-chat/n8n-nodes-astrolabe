@@ -1,0 +1,59 @@
+{
+  "name": "n8n-nodes-astrolabe",
+  "version": "0.2.0",
+  "description": "n8n node for Astrolabe — sovereign EU AI for the social economy (OpenAI-compatible API).",
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n",
+    "astrolabe",
+    "ai",
+    "llm",
+    "sovereign",
+    "openai-compatible"
+  ],
+  "license": "MIT",
+  "homepage": "https://astrolabe.chat",
+  "author": {
+    "name": "Astrolabe",
+    "email": "contact@astrolabe.chat"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/astrolabe-chat/n8n-nodes-astrolabe.git"
+  },
+  "bugs": {
+    "url": "https://github.com/astrolabe-chat/n8n-nodes-astrolabe/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc && gulp build:icons",
+    "dev": "tsc --watch",
+    "lint": "eslint nodes credentials package.json",
+    "lint:fix": "eslint nodes credentials package.json --fix",
+    "prepublishOnly": "npm run build && npm run lint"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/AstrolabeApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/Astrolabe/Astrolabe.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-n8n-nodes-base": "^1.16.3",
+    "gulp": "^5.0.0",
+    "n8n-workflow": "^1.69.0",
+    "typescript": "^5.7.2"
+  }
+}
