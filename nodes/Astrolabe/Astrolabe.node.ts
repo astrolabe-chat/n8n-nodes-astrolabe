@@ -1,12 +1,46 @@
 import type {
   IExecuteFunctions,
   IDataObject,
+  ILoadOptionsFunctions,
   INodeExecutionData,
+  INodePropertyOptions,
   INodeType,
   INodeTypeDescription,
   IHttpRequestMethods,
 } from "n8n-workflow";
 import { NodeOperationError } from "n8n-workflow";
+
+// Public catalogue (no API key): list of models + pricing.
+const CATALOGUE_URL = "https://app.astrolabe.chat/api/models";
+
+// Loads the live model list for a given mode and maps it to dropdown options.
+async function loadModels(
+  ctx: ILoadOptionsFunctions,
+  mode: "chat" | "embedding",
+): Promise<INodePropertyOptions[]> {
+  const response = (await ctx.helpers.httpRequest({
+    method: "GET",
+    url: CATALOGUE_URL,
+    json: true,
+  })) as { data?: IDataObject[] };
+
+  return (response.data ?? [])
+    .filter((m) => m.mode === mode)
+    .map((m) => {
+      const pricing = (m.pricing ?? {}) as IDataObject;
+      const origin = m.sovereign ? "Sovereign EU" : "Cloud passthrough";
+      const inPrice = pricing.input_per_million_tokens;
+      const outPrice = pricing.output_per_million_tokens;
+      // Embedding models have no output price; show input only in that case.
+      const price =
+        outPrice != null ? `${inPrice}/${outPrice}` : `${inPrice}`;
+      return {
+        name: (m.name as string) || (m.id as string),
+        value: m.id as string,
+        description: `${origin} · ${m.context_max} ctx · ${price} ${pricing.currency}/M tokens`,
+      };
+    });
+}
 
 export class Astrolabe implements INodeType {
   description: INodeTypeDescription = {
@@ -53,12 +87,13 @@ export class Astrolabe implements INodeType {
 
       // ----- Chat -----
       {
-        displayName: "Model",
+        displayName: 'Model Name or ID',
         name: "model",
-        type: "string",
+        type: "options",
+        typeOptions: { loadOptionsMethod: "getChatModels" },
         default: "astrolabe-base",
         required: true,
-        description: "Public model name. In Phase 1, only astrolabe-base is available.",
+        description: 'Chat model to use. The list is loaded live from the Astrolabe catalogue. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
         displayOptions: { show: { operation: ["chat"] } },
       },
       {
@@ -151,11 +186,13 @@ export class Astrolabe implements INodeType {
 
       // ----- Embedding -----
       {
-        displayName: "Model",
+        displayName: 'Model Name or ID',
         name: "embeddingModel",
-        type: "string",
-        default: "astrolabe-embed",
+        type: "options",
+        typeOptions: { loadOptionsMethod: "getEmbeddingModels" },
+        default: "mistral-embed",
         required: true,
+        description: 'Embedding model to use. The list is loaded live from the Astrolabe catalogue. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
         displayOptions: { show: { operation: ["embedding"] } },
       },
       {
@@ -179,6 +216,17 @@ export class Astrolabe implements INodeType {
           "Whether to return only the useful fields (content, reasoning_content, usage) instead of the full API response",
       },
     ],
+  };
+
+  methods = {
+    loadOptions: {
+      async getChatModels(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        return loadModels(this, "chat");
+      },
+      async getEmbeddingModels(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        return loadModels(this, "embedding");
+      },
+    },
   };
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {

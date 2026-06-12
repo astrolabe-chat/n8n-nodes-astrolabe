@@ -20,8 +20,8 @@ In n8n: **Settings → Community Nodes → Install**, then enter `n8n-nodes-astr
 
 | Operation | Description |
 | --- | --- |
-| **Message a Model** | Chat completion. Default model `astrolabe-base`. Returns `content` + `reasoning_content` (internal reasoning) + `usage`. |
-| **Create an Embedding** | Turns text into a vector with `astrolabe-embed` (1024 dimensions). |
+| **Message a Model** | Chat completion. The model is picked from a dropdown loaded live from the Astrolabe catalogue. Returns `content` + `reasoning_content` (internal reasoning) + `usage`. |
+| **Create an Embedding** | Turns text into a vector for semantic search or RAG. The embedding model is picked from the same live catalogue. |
 
 > ⚠️ `astrolabe-base` reasons before answering: keep **Max Tokens ≥ 600** or the reply may come back empty. The node already defaults to 600.
 
