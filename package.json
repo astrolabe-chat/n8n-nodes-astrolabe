@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-astrolabe",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "n8n node for Astrolabe — sovereign EU AI for the social economy (OpenAI-compatible API).",
   "keywords": [
     "n8n-community-node-package",
@@ -46,6 +46,9 @@
     "nodes": [
       "dist/nodes/Astrolabe/Astrolabe.node.js"
     ]
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
