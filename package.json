@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-astrolabe",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "n8n node for Astrolabe — sovereign EU AI for the social economy (OpenAI-compatible API).",
   "keywords": [
     "n8n-community-node-package",

@@ -19,9 +19,12 @@ async function loadModels(
 ): Promise<INodePropertyOptions[]> {
   const credentials = await ctx.getCredentials("astrolabeApi");
   const baseUrl = (credentials.baseUrl as string).replace(/\/+$/, "");
+  // The pricing catalogue is served at the host root (/pricing), outside the
+  // OpenAI-compatible /v1 namespace owned by the gateway.
+  const origin = new URL(baseUrl).origin;
   const response = (await ctx.helpers.httpRequestWithAuthentication.call(ctx, "astrolabeApi", {
     method: "GET",
-    url: `${baseUrl}/models/pricing`,
+    url: `${origin}/pricing`,
     json: true,
   })) as { data?: IDataObject[] };
 
