@@ -7,8 +7,9 @@ import type {
   INodeType,
   INodeTypeDescription,
   IHttpRequestMethods,
+  JsonObject,
 } from "n8n-workflow";
-import { NodeOperationError } from "n8n-workflow";
+import { NodeApiError, NodeOperationError } from "n8n-workflow";
 
 // Public catalogue (no API key): list of models + pricing.
 const CATALOGUE_URL = "https://app.astrolabe.chat/api/models";
@@ -321,7 +322,12 @@ export class Astrolabe implements INodeType {
           });
           continue;
         }
-        throw error;
+        // Already-typed node errors pass through; wrap raw HTTP errors so n8n
+        // can surface the status code and response body in the error panel.
+        if (error instanceof NodeApiError || error instanceof NodeOperationError) {
+          throw error;
+        }
+        throw new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
       }
     }
 
