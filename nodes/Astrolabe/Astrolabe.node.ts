@@ -11,17 +11,17 @@ import type {
 } from "n8n-workflow";
 import { NodeApiError, NodeOperationError } from "n8n-workflow";
 
-// Public catalogue (no API key): list of models + pricing.
-const CATALOGUE_URL = "https://app.astrolabe.chat/api/models";
-
 // Loads the live model list for a given mode and maps it to dropdown options.
+// The pricing catalogue lives on the integrated API and requires the API key.
 async function loadModels(
   ctx: ILoadOptionsFunctions,
   mode: "chat" | "embedding",
 ): Promise<INodePropertyOptions[]> {
-  const response = (await ctx.helpers.httpRequest({
+  const credentials = await ctx.getCredentials("astrolabeApi");
+  const baseUrl = (credentials.baseUrl as string).replace(/\/+$/, "");
+  const response = (await ctx.helpers.httpRequestWithAuthentication.call(ctx, "astrolabeApi", {
     method: "GET",
-    url: CATALOGUE_URL,
+    url: `${baseUrl}/models/pricing`,
     json: true,
   })) as { data?: IDataObject[] };
 
