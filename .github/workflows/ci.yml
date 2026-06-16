@@ -4,7 +4,9 @@
 # 1. CI (PR + push main) : install -> lint (verified rules) -> build.
 # 2. Publish (push main) : publishes to npm WITH provenance, only when the
 #    package.json version is not already published (idempotent). Bump the
-#    version and merge to release.
+#    version and merge to release. On a fresh version it also creates a
+#    GitHub Release + tag (vX.Y.Z) with auto-generated notes, so each npm
+#    release stays traceable (n8n recommends release notes per version).
 #
 # Provenance requires a PUBLIC repository (npm limitation) and the
 # `id-token: write` permission. n8n verification (since 2026-05-01) requires
@@ -56,7 +58,7 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # create the GitHub Release + tag after publishing
       id-token: write # required to generate the provenance attestation
     steps:
       - uses: actions/checkout@v4
@@ -88,3 +90,16 @@ jobs:
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Tag the released commit and open a GitHub Release with notes
+      # auto-generated from the merged PRs/commits since the previous tag.
+      - name: GitHub Release + tag
+        if: steps.check.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --target "$GITHUB_SHA" \
+            --generate-notes
