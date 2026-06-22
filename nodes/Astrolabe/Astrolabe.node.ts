@@ -94,6 +94,14 @@ function compact(body: IDataObject): IDataObject {
   return out;
 }
 
+// Builds a nested object (e.g. `sort` { by, dir } or `date_range` { from, to })
+// from its parts, returning undefined when nothing is set so compact() drops the
+// whole key instead of sending an empty object the API would reject.
+function nested(obj: IDataObject): IDataObject | undefined {
+  const out = compact(obj);
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export class Astrolabe implements INodeType {
   description: INodeTypeDescription = {
     displayName: "Astrolabe",
@@ -220,12 +228,64 @@ export class Astrolabe implements INodeType {
         displayOptions: { show: { resource: ["model"], operation: ["chat"] } },
         options: [
           {
+            displayName: "Cite Source Links",
+            name: "knowledgeBaseCiteSources",
+            type: "boolean",
+            default: false,
+            description:
+              "Whether to let the model include each extract's source link (source_url, when set) in its answer, so the reader can reach the original resource. Only used when a knowledge base is selected.",
+          },
+          {
+            displayName: "Date Range From (YYYY-MM-DD)",
+            name: "kbDateFrom",
+            type: "string",
+            default: "",
+            description:
+              "Keep only extracts whose business date is on/after this date. Only used when a knowledge base is selected.",
+          },
+          {
+            displayName: "Date Range To (YYYY-MM-DD)",
+            name: "kbDateTo",
+            type: "string",
+            default: "",
+            description:
+              "Keep only extracts whose business date is on/before this date. Only used when a knowledge base is selected.",
+          },
+          {
             displayName: "Facet Filter (JSON)",
             name: "knowledgeBaseFacets",
             type: "string",
             default: "",
             description:
               'Optional JSON object to filter retrieved extracts, e.g. {"theme":"billing"}. Only used when a knowledge base is selected.',
+          },
+          {
+            displayName: "Graph Expansion (JSON)",
+            name: "knowledgeBaseExpand",
+            type: "string",
+            default: "",
+            description:
+              'Pull in extracts linked by FACETS (business relation), on top of semantic ones. JSON object: seeds (default 3), facets (which facet keys to follow; omit = all), match ("all" = shares every facet, "any" = shares at least one), depth (levels, default 1), max_chunks (hard cap, default 30). Example: {"facets":["dossier"],"match":"any","depth":3,"max_chunks":60}. Only used when a knowledge base is selected.',
+          },
+          {
+            displayName: "Knowledge Base Max Tool Calls (Agentic)",
+            name: "knowledgeBaseMaxSteps",
+            type: "number",
+            default: 8,
+            description:
+              "Agentic mode only: max number of search rounds the model may run (default 8, max 15). Only used when a knowledge base is selected.",
+          },
+          {
+            displayName: "Knowledge Base Mode",
+            name: "knowledgeBaseMode",
+            type: "options",
+            options: [
+              { name: "Static (Retrieve Once)", value: "static" },
+              { name: "Agentic (Model Searches On Its Own)", value: "agentic" },
+            ],
+            default: "static",
+            description:
+              "Agentic lets the model decide when/what to search and loop (more calls, non-streaming). Static retrieves once before answering. Only used when a knowledge base is selected.",
           },
           {
             displayName: "Knowledge Base Query",
@@ -264,11 +324,12 @@ export class Astrolabe implements INodeType {
               "How many extracts to retrieve from the knowledge base(s). Only used when a knowledge base is selected.",
           },
           {
-            displayName: "Stop Sequences",
-            name: "stop",
-            type: "string",
-            default: "",
-            description: "Sequences that stop generation, comma-separated",
+            displayName: "Search Conversation Turns",
+            name: "knowledgeBaseHistory",
+            type: "number",
+            default: 3,
+            description:
+              "How many recent user turns to fold into the retrieval query, so short follow-ups keep the subject (default 3). Set 1 to search on the last message only. Only used when a knowledge base is selected.",
           },
           {
             displayName: "Temperature",
@@ -277,13 +338,6 @@ export class Astrolabe implements INodeType {
             typeOptions: { minValue: 0, maxValue: 2, numberPrecision: 2 },
             default: 0.7,
             description: "0 = deterministic (extraction), 0.7 = creative (writing)",
-          },
-          {
-            displayName: "Top P",
-            name: "topP",
-            type: "number",
-            typeOptions: { minValue: 0, maxValue: 1, numberPrecision: 2 },
-            default: 1,
           },
         ],
       },
@@ -383,6 +437,14 @@ export class Astrolabe implements INodeType {
         displayOptions: { show: { resource: ["knowledgeBase"], operation: ["create"] } },
         options: [
           {
+            displayName: "Facet Schema (JSON)",
+            name: "facetSchema",
+            type: "string",
+            default: "",
+            description:
+              'Optional JSON. Each facet: key, optional type (text|number|boolean|date), description (what the AI should put in it), values (enum, text only), default. e.g. {"facets":[{"key":"theme","values":["billing","support"]},{"key":"amount","type":"number","description":"Total in euros"}]}',
+          },
+          {
             displayName: "Intent",
             name: "intent",
             type: "string",
@@ -390,12 +452,16 @@ export class Astrolabe implements INodeType {
             description: "Describes the base's purpose; guides AI chunking",
           },
           {
-            displayName: "Facet Schema (JSON)",
-            name: "facetSchema",
-            type: "string",
-            default: "",
+            displayName: "Type",
+            name: "role",
+            type: "options",
+            options: [
+              { name: "Data", value: "data" },
+              { name: "Process (Playbooks)", value: "process" },
+            ],
+            default: "data",
             description:
-              'Optional JSON, e.g. {"facets":[{"key":"theme","values":["billing","support"]}]}',
+              "Data (default): a regular knowledge base of facts. Process: a base of playbooks describing, step by step, how to run an analysis. In agentic mode the AI consults it first to follow the right method.",
           },
         ],
       },
@@ -409,13 +475,6 @@ export class Astrolabe implements INodeType {
         displayOptions: { show: { resource: ["knowledgeBase"], operation: ["update"] } },
         options: [
           {
-            displayName: "New Name",
-            name: "name",
-            type: "string",
-            default: "",
-            description: "New display name",
-          },
-          {
             displayName: "New Intent",
             name: "intent",
             type: "string",
@@ -423,11 +482,30 @@ export class Astrolabe implements INodeType {
             description: "New intent description",
           },
           {
+            displayName: "New Name",
+            name: "name",
+            type: "string",
+            default: "",
+            description: "New display name",
+          },
+          {
             displayName: "New Slug",
             name: "newSlug",
             type: "string",
             default: "",
             description: "Rename the base's API identifier (normalised, unique)",
+          },
+          {
+            displayName: "Type",
+            name: "role",
+            type: "options",
+            options: [
+              { name: "Data", value: "data" },
+              { name: "Process (Playbooks)", value: "process" },
+            ],
+            default: "data",
+            description:
+              "Process = a base of playbooks the AI consults first in agentic mode. Leave as Data for a regular base.",
           },
         ],
       },
@@ -437,8 +515,8 @@ export class Astrolabe implements INodeType {
         name: "query",
         type: "string",
         default: "",
-        required: true,
-        description: "Semantic search query. Returns the closest chunks, decrypted, with score.",
+        description:
+          "Semantic search query (no model call) when set. Leave EMPTY to list/filter only (no score, no embedding cost), useful with Filters and Sort.",
         displayOptions: { show: { resource: ["knowledgeBase"], operation: ["search"] } },
       },
       {
@@ -450,18 +528,103 @@ export class Astrolabe implements INodeType {
         displayOptions: { show: { resource: ["knowledgeBase"], operation: ["search"] } },
         options: [
           {
-            displayName: "Max Results",
-            name: "topK",
-            type: "number",
-            default: 8,
-            description: "Max number of extracts to return",
+            displayName: "Aggregate (Numeric Facet, JSON)",
+            name: "aggregate",
+            type: "string",
+            default: "",
+            description:
+              'Numeric facet name, or a JSON array of names, to SUM/AVERAGE exactly server-side. The "aggregates" output holds {field, count, sum, avg, min, max} per field. Analytic regime only (leave Query empty). Example: "montant_ttc" or ["montant_ht","tva"].',
           },
           {
-            displayName: "Facets (JSON)",
+            displayName: "Date Range From (YYYY-MM-DD)",
+            name: "dateFrom",
+            type: "string",
+            default: "",
+            description: "Keep only chunks whose business date is on/after this date",
+          },
+          {
+            displayName: "Date Range To (YYYY-MM-DD)",
+            name: "dateTo",
+            type: "string",
+            default: "",
+            description: "Keep only chunks whose business date is on/before this date",
+          },
+          {
+            displayName: "Facets Equality (JSON)",
             name: "facets",
             type: "string",
             default: "",
-            description: 'Optional JSON object to filter results, e.g. {"theme":"billing"}',
+            description:
+              'Optional JSON object for exact-match metadata, e.g. {"theme":"billing"}',
+          },
+          {
+            displayName: "Filters (JSON)",
+            name: "filters",
+            type: "string",
+            default: "",
+            description:
+              'Optional JSON array of typed facet comparisons. Each item: {"key":…, "op":…, "value":…}. Operators: eq, neq, gt, gte, lt, lte, in, contains. Dates are ISO YYYY-MM-DD. Example: [{"key":"montant","op":"gte","value":1000},{"key":"categorie","op":"in","value":["A","B"]}]',
+          },
+          {
+            displayName: "Graph Expansion (JSON)",
+            name: "expand",
+            type: "string",
+            default: "",
+            description:
+              'Also return chunks linked by FACETS (business relation), on top of semantic ones (requires a Query). JSON object: seeds (default 3), facets (which facet keys to follow; omit = all), match ("all" | "any"), depth (default 1), max_chunks (default 30). Example: {"facets":["dossier"],"match":"any","depth":3,"max_chunks":60}',
+          },
+          {
+            displayName: "Max Results (Top K)",
+            name: "topK",
+            type: "number",
+            default: 8,
+            description:
+              "Max results (capped at 50). For exhaustive listings, set 50 and paginate with Offset.",
+          },
+          {
+            displayName: "Offset (Pagination)",
+            name: "offset",
+            type: "number",
+            default: 0,
+            description:
+              "Skip N results (0, 50, 100…) to page through a large set exhaustively (listing mode)",
+          },
+          {
+            displayName: "Return (Group By)",
+            name: "groupBy",
+            type: "options",
+            options: [
+              { name: "Chunks (One Result Per Excerpt)", value: "chunk" },
+              { name: "Documents (Excerpts Grouped) — Read Total to Count", value: "document" },
+              { name: "Dates (One Result Per Business Day) — Read Distinct Documents to Count", value: "date" },
+            ],
+            default: "chunk",
+            description:
+              '"document" groups excerpts by parent document (each once). "date" returns one result per distinct business date. To COUNT records, use "document" and read the total output; for a chronological view use "date" and read distinct_documents.',
+          },
+          {
+            displayName: "Sort By",
+            name: "sortBy",
+            type: "options",
+            options: [
+              { name: "Relevance (Score)", value: "relevance" },
+              { name: "Business Date", value: "date" },
+              { name: "Creation Date (Added to Base)", value: "created" },
+              { name: "Document Name (A→Z)", value: "alpha" },
+            ],
+            default: "relevance",
+            description:
+              '"relevance" requires a Query; without a query it falls back to date desc',
+          },
+          {
+            displayName: "Sort Direction",
+            name: "sortDir",
+            type: "options",
+            options: [
+              { name: "Descending", value: "desc" },
+              { name: "Ascending", value: "asc" },
+            ],
+            default: "desc",
           },
         ],
       },
@@ -582,12 +745,28 @@ export class Astrolabe implements INodeType {
             description: "Your own identifier. If it already exists, the document is replaced (upsert).",
           },
           {
+            displayName: "Facet Overrides (JSON)",
+            name: "facetOverrides",
+            type: "string",
+            default: "",
+            description:
+              'Optional JSON object of facet values to force on every chunk (e.g. {"categorie":"compte-rendu"}). In AI chunking mode, the model only fills in the remaining facets; in simple mode these values are applied as-is. Always takes priority over AI-extracted values.',
+          },
+          {
             displayName: "Skip Compliance (PII)",
             name: "bypassConformite",
             type: "boolean",
             default: false,
             description:
               "Whether to ingest verbatim, without PII masking. Only if compliance is active on the account.",
+          },
+          {
+            displayName: "Source URL",
+            name: "sourceUrl",
+            type: "string",
+            default: "",
+            description:
+              "Link to the original resource. Informational; returned in search results and RAG sources.",
           },
           {
             displayName: "Title",
@@ -608,13 +787,6 @@ export class Astrolabe implements INodeType {
         displayOptions: { show: { resource: ["document"], operation: ["update"] } },
         options: [
           {
-            displayName: "New Title",
-            name: "filename",
-            type: "string",
-            default: "",
-            description: "New title / filename",
-          },
-          {
             displayName: "New Business Date",
             name: "date",
             type: "dateTime",
@@ -627,6 +799,20 @@ export class Astrolabe implements INodeType {
             type: "string",
             default: "",
             description: "New external identifier",
+          },
+          {
+            displayName: "New Source URL",
+            name: "sourceUrl",
+            type: "string",
+            default: "",
+            description: "Link to the original resource. Leave empty to clear it.",
+          },
+          {
+            displayName: "New Title",
+            name: "filename",
+            type: "string",
+            default: "",
+            description: "New title / filename",
           },
         ],
       },
@@ -818,6 +1004,8 @@ export class Astrolabe implements INodeType {
         let listField: string | undefined;
         // Shapes the single-item output of `model` operations when simplify is on.
         let simplifyKind: "chat" | "embedding" | undefined;
+        // KB search returns a single structured item (analytic metadata preserved).
+        let kbSearch = false;
 
         if (resource === "model") {
           if (operation === "chat") {
@@ -842,20 +1030,19 @@ export class Astrolabe implements INodeType {
             };
             if (options.maxTokens) reqBody.max_tokens = options.maxTokens;
             if (options.temperature !== undefined) reqBody.temperature = options.temperature;
-            if (options.topP !== undefined) reqBody.top_p = options.topP;
             if (options.responseFormat && options.responseFormat !== "text") {
               reqBody.response_format = { type: options.responseFormat };
-            }
-            if (options.stop) {
-              reqBody.stop = (options.stop as string)
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean);
             }
             // RAG: pass the knowledge base params; the gateway does the retrieval
             // and returns the extracts used in `astrolabe_sources`.
             if (knowledgeBases.length > 0) {
               reqBody.knowledge_base = knowledgeBases;
+              if (options.knowledgeBaseMode) {
+                reqBody.knowledge_base_mode = options.knowledgeBaseMode;
+              }
+              if (options.knowledgeBaseMaxSteps !== undefined) {
+                reqBody.knowledge_base_max_steps = options.knowledgeBaseMaxSteps;
+              }
               if (options.knowledgeBaseRequest) {
                 reqBody.knowledge_base_request = options.knowledgeBaseRequest;
               }
@@ -864,6 +1051,19 @@ export class Astrolabe implements INodeType {
               if (options.knowledgeBaseTopK !== undefined) {
                 reqBody.knowledge_base_top_k = options.knowledgeBaseTopK;
               }
+              if (options.knowledgeBaseCiteSources) {
+                reqBody.knowledge_base_cite_sources = true;
+              }
+              if (options.knowledgeBaseHistory !== undefined) {
+                reqBody.knowledge_base_history = options.knowledgeBaseHistory;
+              }
+              const dateRange = nested({
+                from: options.kbDateFrom,
+                to: options.kbDateTo,
+              });
+              if (dateRange) reqBody.knowledge_base_date_range = dateRange;
+              const expand = jsonMaybe(options.knowledgeBaseExpand);
+              if (expand !== undefined) reqBody.knowledge_base_expand = expand;
             }
             body = reqBody;
             simplifyKind = "chat";
@@ -886,6 +1086,7 @@ export class Astrolabe implements INodeType {
             body = compact({
               name,
               intent: fields.intent,
+              role: fields.role,
               facet_schema: jsonMaybe(fields.facetSchema),
             });
           } else if (operation === "update") {
@@ -893,23 +1094,37 @@ export class Astrolabe implements INodeType {
             const fields = this.getNodeParameter("updateFields", i, {}) as IDataObject;
             method = "PATCH";
             url = `${baseUrl}/kb/${enc(slug)}`;
-            body = compact({ name: fields.name, intent: fields.intent, slug: fields.newSlug });
+            body = compact({
+              name: fields.name,
+              intent: fields.intent,
+              role: fields.role,
+              slug: fields.newSlug,
+            });
           } else if (operation === "delete") {
             const slug = this.getNodeParameter("slug", i) as string;
             method = "DELETE";
             url = `${baseUrl}/kb/${enc(slug)}`;
           } else {
-            // search
+            // search — semantic (with query) and/or analytic (filters, sort,
+            // group_by, aggregate). Returns a single structured item so the
+            // analytic metadata (total, truncated, aggregates…) is preserved.
             const slug = this.getNodeParameter("slug", i) as string;
-            const query = this.getNodeParameter("query", i) as string;
+            const query = this.getNodeParameter("query", i, "") as string;
             const opts = this.getNodeParameter("searchOptions", i, {}) as IDataObject;
             url = `${baseUrl}/kb/${enc(slug)}/search`;
             body = compact({
               query,
+              group_by: opts.groupBy,
               top_k: opts.topK,
+              offset: opts.offset,
+              sort: nested({ by: opts.sortBy, dir: opts.sortDir }),
               facets: jsonMaybe(opts.facets),
+              filters: jsonMaybe(opts.filters),
+              date_range: nested({ from: opts.dateFrom, to: opts.dateTo }),
+              expand: jsonMaybe(opts.expand),
+              aggregate: jsonMaybe(opts.aggregate),
             });
-            listField = "data";
+            kbSearch = true;
           }
         } else if (resource === "document") {
           const slug = this.getNodeParameter("slug", i) as string;
@@ -926,9 +1141,11 @@ export class Astrolabe implements INodeType {
               title: fields.title,
               date: fields.date,
               external_id: fields.externalId,
+              source_url: fields.sourceUrl,
               bypass_conformite: fields.bypassConformite || undefined,
               chunking: fields.chunking,
               chunk_model: fields.chunking === "ai" ? fields.chunkModel : undefined,
+              facet_overrides: jsonMaybe(fields.facetOverrides),
             });
           } else if (operation === "get") {
             const documentId = this.getNodeParameter("documentId", i) as string;
@@ -943,6 +1160,7 @@ export class Astrolabe implements INodeType {
               filename: fields.filename,
               date: fields.date,
               external_id: fields.externalId,
+              source_url: fields.sourceUrl,
             });
           } else {
             // delete
@@ -998,7 +1216,25 @@ export class Astrolabe implements INodeType {
           },
         )) as IDataObject;
 
-        // List/search: fan the array out to one item each.
+        // KB search: one structured item mirroring the Make/Zapier output, so the
+        // analytic fields (total, truncated, distinct_documents, aggregates) are
+        // not lost when the array would otherwise be fanned out.
+        if (kbSearch) {
+          returnData.push({
+            json: {
+              group_by: response.group_by ?? null,
+              total: response.total ?? null,
+              truncated: response.truncated ?? null,
+              distinct_documents: response.distinct_documents ?? null,
+              aggregates: response.aggregates ?? null,
+              results: response.data ?? [],
+            },
+            pairedItem: { item: i },
+          });
+          continue;
+        }
+
+        // List: fan the array out to one item each.
         if (listField) {
           const rows = (response[listField] as IDataObject[]) ?? [];
           for (const row of rows) {
@@ -1018,6 +1254,7 @@ export class Astrolabe implements INodeType {
               reasoning_content: message.reasoning_content ?? null,
               finish_reason: choice.finish_reason ?? null,
               astrolabe_sources: response.astrolabe_sources ?? null,
+              astrolabe_steps: response.astrolabe_steps ?? null,
               usage: response.usage ?? null,
             };
           } else if (simplify && simplifyKind === "embedding") {
